@@ -1,0 +1,390 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>minexdino by Ar07.Sah715</title>
+    <!-- Tailwind CSS CDN for basic styling -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        /* Apply Inter font and basic body styling */
+        body {
+            font-family: 'Inter', sans-serif;
+            background-color: #e2e8f0; /* Light blue-gray background */
+            display: flex;
+            flex-direction: column; /* Stack elements vertically */
+            justify-content: center;
+            align-items: center;
+            min-height: 100vh;
+            margin: 0;
+            overflow: hidden; /* Prevent scrolling if canvas is slightly larger */
+        }
+        canvas {
+            border-radius: 1rem; /* Rounded corners for the canvas */
+            box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.1), 0 4px 6px -2px rgba(0, 0, 0, 0.05); /* Subtle shadow */
+            display: block; /* Remove extra space below canvas */
+            /* Responsive sizing for canvas */
+            width: 90vw;
+            max-width: 800px;
+            height: auto; /* Maintain aspect ratio */
+            aspect-ratio: 16 / 9; /* Standard widescreen aspect ratio */
+        }
+        /* Style for the game over message box */
+        #gameOverBox {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            background-color: rgba(255, 255, 255, 0.9);
+            padding: 1.5rem;
+            border-radius: 0.75rem;
+            box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.1), 0 4px 6px -2px rgba(0, 0, 0, 0.05);
+            text-align: center;
+            display: none; /* Hidden by default */
+            z-index: 10; /* Ensure it's on top of the canvas */
+        }
+        #restartButton {
+            background-color: #3b82f6; /* Tailwind blue-500 */
+            color: white;
+            padding: 0.75rem 1.5rem;
+            border-radius: 0.5rem;
+            font-weight: bold;
+            cursor: pointer;
+            transition: background-color 0.2s ease-in-out;
+        }
+        #restartButton:hover {
+            background-color: #2563eb; /* Tailwind blue-600 */
+        }
+    </style>
+</head>
+<body class="bg-gray-100 flex flex-col items-center justify-center min-h-screen p-4">
+    <div class="flex flex-col items-center justify-center w-full relative">
+        <h1 class="text-3xl font-bold text-gray-800 mb-6 text-center">Minecraft Dino Jump!</h1>
+        <div id="game-info" class="text-gray-700 text-lg mb-4">
+            Score: <span id="scoreDisplay">0</span>
+        </div>
+        <canvas id="gameCanvas" class="w-full max-w-2xl bg-white rounded-xl shadow-lg"></canvas>
+
+        <!-- Game Over Message Box -->
+        <div id="gameOverBox" class="flex flex-col items-center">
+            <h2 class="text-2xl font-bold text-gray-800 mb-4">Game Over!</h2>
+            <p class="text-lg text-gray-700 mb-6">Your Score: <span id="finalScoreDisplay">0</span></p>
+            <button id="restartButton">Restart Game</button>
+        </div>
+
+        <div class="mt-6 text-gray-700 text-center">
+            <p class="font-semibold">Controls:</p>
+            <p>Press <span class="font-mono bg-gray-200 px-2 py-1 rounded-md">↑</span> arrow key or <span class="font-mono bg-gray-200 px-2 py-1 rounded-md">Spacebar</span> to jump.</p>
+        </div>
+    </div>
+
+    <script>
+        // Get canvas and context
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+        const scoreDisplay = document.getElementById('scoreDisplay');
+        const finalScoreDisplay = document.getElementById('finalScoreDisplay');
+        const gameOverBox = document.getElementById('gameOverBox');
+        const restartButton = document.getElementById('restartButton');
+
+        // Set initial canvas dimensions
+        canvas.width = canvas.offsetWidth;
+        canvas.height = canvas.offsetHeight;
+
+        // Game constants
+        const GRAVITY = 0.5;
+        const JUMP_STRENGTH = -12;
+        const GROUND_HEIGHT = 40; // Height of the ground layer
+        const BLOCK_SIZE = 30; // Size for rendering pixelated background and obstacles
+        let SCROLLING_SPEED = 5; // Initial speed of scrolling
+        const MAX_SCROLLING_SPEED = 10; // Max speed for difficulty
+        const SPEED_INCREASE_INTERVAL = 200; // How often speed increases (based on score - made faster)
+
+        // New constants for obstacle spacing (in frames, not pixels)
+        const OBSTACLE_MIN_FRAME_GAP = 60; // Minimum frames between obstacles (approx 1 second)
+        const OBSTACLE_MAX_FRAME_GAP = 180; // Maximum frames between obstacles (approx 3 seconds)
+
+        // Input handling
+        const keys = {}; // Object to store which keys are currently pressed
+
+        // Game state variables
+        let player;
+        let obstacles = [];
+        let score;
+        let gameRunning = false;
+        let obstacleSpawnTimer = 0; // Timer to control obstacle spawning
+        let currentObstacleInterval = 0; // The calculated interval for the next obstacle
+
+        // Event listener for keydown (when a key is pressed)
+        window.addEventListener('keydown', (e) => {
+            keys[e.key] = true; // Set the key's state to true
+            // Prevent default browser behavior for arrow keys and spacebar
+            if (['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', ' '].includes(e.key)) {
+                e.preventDefault();
+            }
+        });
+
+        // Event listener for keyup (when a key is released)
+        window.addEventListener('keyup', (e) => {
+            keys[e.key] = false; // Set the key's state to false
+        });
+
+        /**
+         * Initializes or resets the game state.
+         */
+        function initGame() {
+            player = {
+                x: 80, // Player's fixed X position
+                y: canvas.height - GROUND_HEIGHT - 30, // Player starts on ground
+                width: 30,
+                height: 30,
+                color: '#3b82f6', // Player body color (Tailwind blue-500)
+                eyeColor: '#000000', // Eye color
+                velY: 0,
+                onGround: false
+            };
+
+            obstacles = [];
+            score = 0;
+            SCROLLING_SPEED = 5; // Reset speed
+            gameRunning = true;
+            obstacleSpawnTimer = 0;
+            currentObstacleInterval = getRandomObstacleInterval(); // Initial random interval
+
+            scoreDisplay.textContent = score;
+            gameOverBox.style.display = 'none'; // Hide game over screen
+        }
+
+        /**
+         * Generates a random interval for the next obstacle spawn.
+         * @returns {number} Random interval (in frames).
+         */
+        function getRandomObstacleInterval() {
+            return Math.floor(Math.random() * (OBSTACLE_MAX_FRAME_GAP - OBSTACLE_MIN_FRAME_GAP + 1)) + OBSTACLE_MIN_FRAME_GAP;
+        }
+
+        /**
+         * Generates a new scrolling obstacle (cactus or Ender Dragon).
+         */
+        function generateObstacle() {
+            // Randomly decide if it's a ground obstacle (cactus) or a flying obstacle (Ender Dragon)
+            // Giving a 30% chance for a flying obstacle
+            const isFlyingObstacle = Math.random() < 0.3;
+
+            let obstacle;
+            if (isFlyingObstacle) {
+                // Ender Dragon
+                const dragonWidth = BLOCK_SIZE * 3; // Dragon takes up more horizontal space
+                const dragonHeight = BLOCK_SIZE * 2; // Dragon is taller for its bounding box
+                // Position higher up, ensuring it's above player's max jump height
+                const dragonY = canvas.height - GROUND_HEIGHT - (player.height * 3) - (Math.random() * player.height * 2);
+                obstacle = {
+                    x: canvas.width,
+                    y: dragonY,
+                    width: dragonWidth,
+                    height: dragonHeight, // Bounding box height for collision
+                    color: '#1f2937', // Dark grey/black for Ender Dragon body
+                    type: 'dragon'
+                };
+            } else {
+                // Cactus (ground obstacle)
+                const cactusWidth = BLOCK_SIZE * (Math.floor(Math.random() * 2) + 1); // 1 or 2 blocks wide
+                const cactusHeight = BLOCK_SIZE * (Math.floor(Math.random() * 2) + 1) + BLOCK_SIZE; // At least 2 blocks high, up to 3
+                const cactusY = canvas.height - GROUND_HEIGHT - cactusHeight; // Position on ground
+                obstacle = {
+                    x: canvas.width,
+                    y: cactusY,
+                    width: cactusWidth,
+                    height: cactusHeight,
+                    color: '#1e8449', // Minecraft green for cactus
+                    type: 'cactus'
+                };
+            }
+            obstacles.push(obstacle);
+            obstacleSpawnTimer = 0; // Reset spawn timer
+            currentObstacleInterval = getRandomObstacleInterval(); // Get new interval
+        }
+
+        /**
+         * Checks for collision between two rectangles.
+         * @param {object} rect1 First rectangle {x, y, width, height}.
+         * @param {object} rect2 Second rectangle {x, y, width, height}.
+         * @returns {boolean} True if colliding, false otherwise.
+         */
+        function checkCollision(rect1, rect2) {
+            return rect1.x < rect2.x + rect2.width &&
+                   rect1.x + rect1.width > rect2.x &&
+                   rect1.y < rect2.y + rect2.height &&
+                   rect1.y + rect1.height > rect2.y;
+        }
+
+        /**
+         * Updates the game state.
+         */
+        function update() {
+            if (!gameRunning) return; // Only update if game is running
+
+            // Apply gravity to player
+            player.velY += GRAVITY;
+            player.y += player.velY;
+
+            // Prevent player from falling through the ground
+            if (player.y + player.height > canvas.height - GROUND_HEIGHT) {
+                player.y = canvas.height - GROUND_HEIGHT - player.height;
+                player.velY = 0;
+                player.onGround = true;
+            } else {
+                player.onGround = false; // Player is airborne if not on ground
+            }
+
+            // Player jump
+            if ((keys['ArrowUp'] || keys[' ']) && player.onGround) {
+                player.velY = JUMP_STRENGTH;
+                player.onGround = false;
+            }
+
+            // Update obstacles
+            obstacleSpawnTimer++;
+            if (obstacleSpawnTimer >= currentObstacleInterval) {
+                generateObstacle();
+            }
+
+            for (let i = obstacles.length - 1; i >= 0; i--) {
+                const obstacle = obstacles[i];
+                obstacle.x -= SCROLLING_SPEED; // Move obstacle
+
+                // Check collision with player
+                if (checkCollision(player, obstacle)) {
+                    endGame(); // Game over on collision
+                    return;
+                }
+
+                // Remove obstacle if it goes off-screen
+                if (obstacle.x + obstacle.width < 0) {
+                    obstacles.splice(i, 1);
+                    score++; // Increase score when an obstacle passes
+                    scoreDisplay.textContent = score;
+
+                    // Increase speed gradually
+                    if (score % SPEED_INCREASE_INTERVAL === 0 && SCROLLING_SPEED < MAX_SCROLLING_SPEED) {
+                        SCROLLING_SPEED += 1;
+                        console.log('Speed increased to:', SCROLLING_SPEED);
+                    }
+                }
+            }
+        }
+
+        /**
+         * Draws all game elements.
+         */
+        function draw() {
+            // Clear canvas
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+            // Draw blocky background (Minecraft-like)
+            const numCols = Math.ceil(canvas.width / BLOCK_SIZE);
+            const numRows = Math.ceil(canvas.height / BLOCK_SIZE);
+
+            for (let row = 0; row < numRows; row++) {
+                for (let col = 0; col < numCols; col++) {
+                    let blockColor;
+                    if (row < numRows * 0.6) { // Sky
+                        blockColor = '#87ceeb'; // Sky blue
+                    } else if (row < numRows - (GROUND_HEIGHT / BLOCK_SIZE)) { // Mid-ground (e.g., dirt)
+                        blockColor = '#8b4513'; // Dirt brown
+                    } else { // Ground surface (grass)
+                        blockColor = '#22c55e'; // Grass green
+                    }
+                    ctx.fillStyle = blockColor;
+                    ctx.fillRect(col * BLOCK_SIZE, row * BLOCK_SIZE, BLOCK_SIZE, BLOCK_SIZE);
+                }
+            }
+
+            // Draw obstacles
+            obstacles.forEach(obstacle => {
+                if (obstacle.type === 'cactus') {
+                    ctx.fillStyle = obstacle.color; // Minecraft green for cactus
+                    // Draw main cactus body
+                    ctx.beginPath();
+                    ctx.roundRect(obstacle.x, obstacle.y, obstacle.width, obstacle.height, 5);
+                    ctx.fill();
+                    // Add some "arms" for typical cactus look (optional, simplified)
+                    if (obstacle.width >= BLOCK_SIZE * 2) {
+                        ctx.fillRect(obstacle.x, obstacle.y + obstacle.height * 0.4, BLOCK_SIZE / 2, BLOCK_SIZE);
+                        ctx.fillRect(obstacle.x + obstacle.width - BLOCK_SIZE / 2, obstacle.y + obstacle.height * 0.4, BLOCK_SIZE / 2, BLOCK_SIZE);
+                    }
+                } else if (obstacle.type === 'dragon') {
+                    ctx.fillStyle = obstacle.color; // Dark grey/black for Ender Dragon
+
+                    // More detailed blocky dragon representation
+                    // Main body
+                    ctx.fillRect(obstacle.x, obstacle.y + BLOCK_SIZE, obstacle.width, BLOCK_SIZE);
+                    // Head (front right of body)
+                    ctx.fillRect(obstacle.x + obstacle.width - (BLOCK_SIZE * 0.7), obstacle.y + BLOCK_SIZE * 0.5, BLOCK_SIZE * 1.5, BLOCK_SIZE * 0.5);
+                    // Wing (simple rectangle above body)
+                    ctx.fillRect(obstacle.x + BLOCK_SIZE * 0.5, obstacle.y, obstacle.width * 0.6, BLOCK_SIZE * 0.5);
+                    // Tail (small block behind body)
+                    ctx.fillRect(obstacle.x, obstacle.y + BLOCK_SIZE * 1.2, BLOCK_SIZE * 0.5, BLOCK_SIZE * 0.5);
+                }
+            });
+
+            // Draw player
+            ctx.fillStyle = player.color;
+            ctx.beginPath();
+            ctx.roundRect(player.x, player.y, player.width, player.height, 8);
+            ctx.fill();
+
+            // Draw player eye
+            ctx.fillStyle = player.eyeColor;
+            ctx.fillRect(player.x + player.width / 3, player.y + player.height / 3, player.width / 6, player.height / 6);
+        }
+
+        /**
+         * The main game loop.
+         */
+        function gameLoop() {
+            update();
+            draw();
+            requestAnimationFrame(gameLoop);
+        }
+
+        /**
+         * Ends the game and displays the game over screen.
+         */
+        function endGame() {
+            gameRunning = false;
+            finalScoreDisplay.textContent = score;
+            gameOverBox.style.display = 'flex'; // Show game over screen
+        }
+
+        // Event listener for restart button
+        restartButton.addEventListener('click', () => {
+            initGame(); // Reinitialize game
+            gameLoop(); // Restart game loop
+        });
+
+        // Initialize game on window load
+        window.onload = function() {
+            // Adjust canvas resolution if it changed due to responsiveness after initial load
+            canvas.width = canvas.offsetWidth;
+            canvas.height = canvas.offsetHeight;
+            initGame(); // Initial setup
+            gameLoop(); // Start the game loop
+        };
+
+        // Handle window resizing to make the canvas responsive
+        window.addEventListener('resize', () => {
+            canvas.width = canvas.offsetWidth;
+            canvas.height = canvas.offsetHeight;
+            // Re-adjust player and ground based on new canvas size if necessary
+            player.y = canvas.height - GROUND_HEIGHT - player.height;
+            // Redraw everything
+            draw();
+        });
+    </script>
+
+<div class="absolute bottom-2 right-2 text-sm text-gray-600">
+    &copy; copyright to Ar07Sah715
+</div>
+</body>
+</html>
